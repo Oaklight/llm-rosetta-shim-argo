@@ -1,5 +1,5 @@
-name: argo--openai_responses
-base: openai_responses
+name: argo--chat_completions
+base: chat_completions
 logo: https://i.111666.best/image/wgp6hAUArNq2O6pICMRRvj.png
 
 connection:
@@ -11,7 +11,8 @@ tools:
   custom_tools: true
   max_description_length: 1024
 reasoning:
-  effort_field: reasoning.effort
+  effort_field: reasoning_effort
+  # effort_range not set = full IR ladder (minimal–max)
 
 soft_error_patterns:
   - pattern: "AUTHENTICATION NOTICE FROM ARGO"

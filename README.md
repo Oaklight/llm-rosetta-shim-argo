@@ -14,9 +14,9 @@ in place for now; once this package is stable they can be removed from core.
 
 | Shim | Base | Endpoint |
 |:---|:---|:---|
-| `argo--openai_chat` | `openai_chat` | `https://apps.inside.anl.gov/argoapi/v1` |
-| `argo--anthropic` | `anthropic` | `https://apps.inside.anl.gov/argoapi` |
-| `argo--openai_responses` | `openai_responses` | `https://apps.inside.anl.gov/argoapi` |
+| `argo--chat_completions` | `chat_completions` | `https://apps.inside.anl.gov/argoapi/v1` |
+| `argo--messages` | `messages` | `https://apps.inside.anl.gov/argoapi` |
+| `argo--open_responses` | `open_responses` | `https://apps.inside.anl.gov/argoapi` |
 
 Each shim carries the Argo-specific connection defaults, reasoning config, soft-error
 patterns, and field/schema transforms (Gemini-via-Argo quirks, model-ID mapping).
@@ -36,9 +36,14 @@ registers the `argo--*` shims automatically — no import needed in application 
 ```python
 from llm_rosetta.shims import get_shim
 
-shim = get_shim("argo--openai_chat")     # requires ARGO_API_KEY in the environment
+shim = get_shim("argo--chat_completions")   # requires ARGO_API_KEY in the environment
 print(shim.connection.base_url)
 ```
+
+The pre-0.14 spellings `argo--openai_chat` and `argo--openai_responses` are kept
+as deprecated aliases in llm-rosetta, so they still resolve to the shims above;
+`argo--anthropic` has no alias, so it must be updated to `argo--messages`. New
+code should use the canonical names.
 
 ## Requirements
 

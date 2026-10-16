@@ -9,7 +9,7 @@ from llm_rosetta.shims.provider_shim import _reset_registry
 
 from llm_rosetta_shim_argo import register_shims
 
-_SHIMS = ("argo--anthropic", "argo--openai_chat", "argo--openai_responses")
+_SHIMS = ("argo--messages", "argo--chat_completions", "argo--open_responses")
 
 
 @pytest.fixture()
