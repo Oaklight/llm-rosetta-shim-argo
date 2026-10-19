@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install llm-rosetta (master)
+        run: pip install "llm-rosetta @ git+https://github.com/Oaklight/llm-rosetta.git@master"
+      - name: Install the shim package
+        run: pip install -e . pytest
+      - name: Run tests
+        run: pytest tests -q
