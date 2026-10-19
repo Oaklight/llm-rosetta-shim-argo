@@ -3,12 +3,19 @@
 Argo (Argonne) provider shims for [llm-rosetta](https://github.com/Oaklight/llm-rosetta),
 delivered as a **plugin package** rather than as built-in shims.
 
-This is the standalone-repository variant of
-[llm-rosetta#666](https://github.com/Oaklight/llm-rosetta/issues/666): it verifies
-the plugin shim loader ([#272](https://github.com/Oaklight/llm-rosetta/issues/272) /
-[#273](https://github.com/Oaklight/llm-rosetta/issues/273)) against a real,
-provider-specific shim set. The built-in `argo--*` shims in llm-rosetta are left
-in place for now; once this package is stable they can be removed from core.
+The `argo--*` shims left llm-rosetta core in 0.14.0
+([#666](https://github.com/Oaklight/llm-rosetta/issues/666)); this package is now
+their only source. Declare it in the gateway config and existing provider
+entries keep their names:
+
+```jsonc
+{ "shims": { "presets": ["argo"] } }
+```
+
+`shims.presets` expands to this repository's archive path via llm-rosetta's
+catalogue; the equivalent explicit entry is `{"url": "...", "path":
+"src/llm_rosetta_shim_argo/providers"}`. The repository is public, so no
+`token_env` is needed.
 
 ## Shims
 
@@ -40,10 +47,11 @@ shim = get_shim("argo--chat_completions")   # requires ARGO_API_KEY in the envir
 print(shim.connection.base_url)
 ```
 
-The pre-0.14 spellings `argo--openai_chat` and `argo--openai_responses` are kept
-as deprecated aliases in llm-rosetta, so they still resolve to the shims above;
-`argo--anthropic` has no alias, so it must be updated to `argo--messages`. New
-code should use the canonical names.
+The pre-0.14 spellings `argo--openai_chat`, `argo--openai_responses` and
+`argo--anthropic` no longer resolve to a shim: this package registers the
+canonical names only. They remain in llm-rosetta as a spelling map, so an old
+config canonicalises first and reaches the error naming this package. Update
+the spelling to the canonical name above.
 
 ## Requirements
 
