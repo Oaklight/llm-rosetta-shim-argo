@@ -56,7 +56,8 @@ the spelling to the canonical name above.
 ## Requirements
 
 - Python >= 3.10
-- `llm-rosetta >= 0.13.0` (needs the plugin shim loader)
+- `llm-rosetta >= 0.14.0.dev28` (needs the plugin shim loader and the
+  vendor manifest)
 - `ARGO_API_KEY` in the environment at request time
 
 ## License

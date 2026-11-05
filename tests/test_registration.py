@@ -25,3 +25,14 @@ def test_registers_argo_shim(_registered, name):
     assert shim is not None
     assert shim.connection.base_url.startswith("https://apps.inside.anl.gov/argoapi")
     assert shim.connection.api_key_env == "ARGO_API_KEY"
+
+
+@pytest.mark.parametrize("name", _SHIMS)
+def test_the_connection_defaults_come_from_the_vendor_manifest(_registered, name):
+    """The manifest holds the credential once; each leaf only adds its URL."""
+    shim = get_shim(name)
+    assert shim is not None
+    assert shim.manifest is not None
+    assert shim.manifest.path.name == "provider.yaml"
+    assert shim.connection.api_key_env == "ARGO_API_KEY"
+    assert shim.connection.model_id_field == "internal_id"

@@ -16,7 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "License :: OSI Approved :: MIT License",
 ]
-dependencies = ["llm-rosetta>=0.13.0"]
+dependencies = ["llm-rosetta>=0.14.0.dev28"]
 
 [project.urls]
 Repository = "https://github.com/Oaklight/llm-rosetta-shim-argo"

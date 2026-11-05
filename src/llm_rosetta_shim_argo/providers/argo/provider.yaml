@@ -1,0 +1,5 @@
+# Vendor manifest: the credential and the model-id field every Argo lane
+# shares.  A leaf inherits every field here and may override any of them.
+connection:
+  api_key_env: ARGO_API_KEY
+  model_id_field: internal_id
