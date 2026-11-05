@@ -22,8 +22,15 @@ jobs:
           # The parent's test-fixture submodule is addressed as git@github.com:;
           # rewrite it to HTTPS, which the runner can clone without a key.
           git config --global url."https://github.com/".insteadOf "git@github.com:"
-          pip install "llm-rosetta @ git+https://github.com/Oaklight/llm-rosetta.git@master"
+          # The core is a two-package monorepo since 0.14; without the
+          # subdirectory pip clones the repository root, finds no project
+          # there and tries a flat-layout build of every directory.
+          pip install "llm-rosetta @ git+https://github.com/Oaklight/llm-rosetta.git@master#subdirectory=packages/llm-rosetta"
       - name: Install the shim package
-        run: pip install -e . pytest
+        # The published floor names the first release with the vendor manifest;
+        # it is not on PyPI yet, and core is installed from git master above.
+        run: |
+          pip install --no-deps -e .
+          pip install pytest
       - name: Run tests
         run: pytest tests -q
