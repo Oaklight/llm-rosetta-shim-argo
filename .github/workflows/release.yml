@@ -1,0 +1,119 @@
+name: Release archive
+
+# Every release publishes the shim archive twice: as a GitHub Release asset and
+# on the orphan `dist` branch.  `dist` is the only shape a file CDN can serve
+# (jsDelivr returns the 129-byte pointer for a Git LFS object, so the archive is
+# committed directly).  `main` receives nothing: `dist/` there is build output
+# and stays gitignored.
+#
+# The archive's root is `providers/`, the layout the package ships, so a
+# gateway source declares `path: "providers"`.
+#
+# The job needs `contents: write` to create the release and push `dist`.  An
+# organization that downgrades `GITHUB_TOKEN` to read-only must restore
+# "Read and write permissions" under Settings -> Actions -> General.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+# Two tags pushed together must not race on the `dist` branch: the second
+# fetch would miss the first commit and the push would be rejected.
+concurrency:
+  group: dist-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build and verify the archive
+        id: build
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          # The tag and the package version must agree; the script refuses a
+          # mismatch, so a wrong tag cannot publish an archive under a name
+          # the loader will never ask for.
+          python scripts/build_shim_archive.py --write --expect-version "${tag#v}" | tee build.log
+          shim=$(sed -n 's/^archive: \(.*\)\.tar\.gz$/\1/p' build.log)
+          digest=$(sed -n 's/^sha256:  //p' build.log)
+          {
+            echo "shim=$shim"
+            echo "digest=$digest"
+            echo "archive=dist/${tag}/${shim}.tar.gz"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attach to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          archive="dist/${tag}/${{ steps.build.outputs.shim }}.tar.gz"
+          digest_file="${archive}.sha256"
+          cat > notes.md <<EOF
+          Shim archive for ${tag}.
+
+          | field | value |
+          |:---|:---|
+          | archive | ${{ steps.build.outputs.shim }}.tar.gz |
+          | sha256 | ${{ steps.build.outputs.digest }} |
+
+          The archive's root is the providers/ directory, so a gateway source
+          loads it with path: "providers".
+
+          Two interchangeable URLs for the same bytes:
+
+          - https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${{ steps.build.outputs.shim }}.tar.gz
+          - https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@dist/${tag}/${{ steps.build.outputs.shim }}.tar.gz
+          EOF
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file notes.md
+          else
+            gh release create "$tag" --title "$tag" --notes-file notes.md
+          fi
+          gh release upload "$tag" "$archive" "$digest_file" --clobber
+
+      - name: Publish to the dist branch
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          shim="${{ steps.build.outputs.shim }}"
+          archive="$(pwd)/dist/${tag}/${shim}.tar.gz"
+          digest_file="${archive}.sha256"
+
+          work=$(mktemp -d)
+          cd "$work"
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Fast-forward on an existing branch; create the orphan on the first
+          # release.  The tag itself is never re-pushed from here.
+          if git fetch -q origin dist; then
+            git checkout -q -B dist FETCH_HEAD
+          else
+            git checkout -q --orphan dist
+          fi
+
+          mkdir -p "${tag}"
+          cp "$archive" "$digest_file" "${tag}/"
+          git add --all
+          if git diff --cached --quiet; then
+            echo "dist already carries ${tag}; nothing to publish"
+            exit 0
+          fi
+          git commit -q -m "dist: ${tag}"
+          git push origin dist

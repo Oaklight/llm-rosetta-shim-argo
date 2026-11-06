@@ -34,3 +34,16 @@ jobs:
           pip install pytest
       - name: Run tests
         run: pytest tests -q
+
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The archive is what a mirror serves, and one that extracts to a shape
+      # the package does not ship is worse than no mirror.  The build needs no
+      # dependency, so it runs before and apart from the test matrix.
+      - name: Check the release archive layout
+        run: python scripts/build_shim_archive.py
