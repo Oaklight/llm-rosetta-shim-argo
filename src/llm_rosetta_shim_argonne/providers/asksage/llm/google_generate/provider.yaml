@@ -1,0 +1,8 @@
+name: asksage--google_generate
+model_type: llm
+format: google_generate
+logo: https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-asksage@main/assets/asksage.webp
+
+connection:
+  base_url: https://api.asksage.ai/server/google/v1beta
+  auth_header: x-access-tokens

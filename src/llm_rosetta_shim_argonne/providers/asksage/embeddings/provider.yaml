@@ -1,0 +1,30 @@
+name: asksage--embeddings
+model_type: embeddings
+format: openai
+logo: https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-asksage@main/assets/asksage.webp
+
+# The lane exists upstream: asksage-proxy adds it by hand as
+# `POST {server}/openai/v1/embeddings` (Oaklight/asksage-proxy PR #10), i.e.
+# `https://api.asksage.anl.gov/server/openai/v1/embeddings` on the ANL host.
+# The body is the OpenAI Embeddings dialect, so the converter for
+# `(embeddings, openai)` reads it unchanged.
+#
+# `base_url` carries `/openai/v1`, like the sibling chat lane, so the path is
+# the bare tail: the gateway builds `{base_url}{default_path}`.  Declaring the
+# catalogue path `/v1/embeddings` here would append a second `/v1`.
+connection:
+  base_url: https://api.asksage.ai/server/openai/v1
+  default_path: /embeddings
+
+# Gateway: this leaf inherits the manifest's `token_command`, so the endpoint
+# authenticates with the credential minted from ASKSAGE_API_KEY.  Declare the
+# provider under `providers:` — for example
+# `{"shim": "asksage--messages", "embeddings_shim": "asksage--embeddings"}` —
+# and the typed endpoint shares that entry's key ring, so one mint serves both
+# lanes (#1401).
+#
+# The legacy `embeddings_providers` section is still refused: it has no
+# `providers:` entry to share the minted credential from, so an entry there
+# that mints is auto-disabled with a reason naming the section and the move to
+# `providers:`.  Do not declare this endpoint without the shim to dodge that
+# refusal; the shim is what carries the credential.

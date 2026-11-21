@@ -1,0 +1,23 @@
+name: alcf_sophia--chat_completions
+model_type: llm
+format: chat_completions
+# `display_name` is this shim's label inside the vendor's group (inherited from
+# ../../provider.yaml), rendered as "sophia · chat_completions".
+display_name: sophia
+
+connection:
+  base_url: https://inference-api.alcf.anl.gov/resource_server/sophia/vllm/v1
+  models_path: https://inference-api.alcf.anl.gov/resource_server/sophia/models
+
+tools:
+  custom_tools: true
+reasoning:
+  effort_field: reasoning_effort
+  # vLLM *documents* low/medium/high with `none` to disable, but this endpoint
+  # answers 500 for `none` too — nothing outside the three is accepted, and it
+  # fails as a 500 rather than a 400.  Without a range the IR ladder's
+  # `minimal`/`xhigh`/`max` reach the wire and break the request.  Verified live
+  # 2026-10-13 with openai/gpt-oss-120b: low/medium/high -> 200 with reasoning
+  # length scaling 20/134/169 chars, minimal/xhigh/max/none/banana -> 500
+  # internal_endpoint_error.  See #961.
+  effort_range: [low, high]

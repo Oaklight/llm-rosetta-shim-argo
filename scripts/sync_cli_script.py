@@ -24,17 +24,17 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SOURCE = REPO_ROOT / "src" / "llm_rosetta_shim_argo" / "tunnel.py"
+SOURCE = REPO_ROOT / "src" / "llm_rosetta_shim_argonne" / "tunnel.py"
 TARGET = REPO_ROOT / "scripts" / "argo-tunnel.py"
 
 _BANNER = """#!/usr/bin/env python3
-# Generated from src/llm_rosetta_shim_argo/tunnel.py -- do not edit here.
+# Generated from src/llm_rosetta_shim_argonne/tunnel.py -- do not edit here.
 # Regenerate with: python scripts/sync_cli_script.py
 #
 # Standalone by design: standard library only, no llm-rosetta import, so this
 # file runs from a download with no install step:
 #
-#   curl -fsSLO https://raw.githubusercontent.com/Oaklight/llm-rosetta-shim-argo/main/scripts/argo-tunnel.py
+#   curl -fsSLO https://raw.githubusercontent.com/Oaklight/llm-rosetta-shim-argonne/main/scripts/argo-tunnel.py
 #   python argo-tunnel.py auth pding --target lambda5.cels.anl.gov
 """
 

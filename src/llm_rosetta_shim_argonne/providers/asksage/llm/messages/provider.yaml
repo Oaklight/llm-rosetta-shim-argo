@@ -1,0 +1,41 @@
+name: asksage--messages
+model_type: llm
+format: messages
+logo: https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-asksage@main/assets/asksage.webp
+
+connection:
+  base_url: https://api.asksage.ai/server/anthropic
+
+# Measured 2026-11-06 against the ANL deployment: `POST
+# https://api.asksage.anl.gov/server/anthropic/v1/messages` answers HTTP 200
+# with an OpenAI `chat.completion` body (`choices[0].message`) rather than a
+# Messages envelope, so the messages converter cannot read this lane.  An ANL
+# provider should use `asksage--chat_completions` and let the gateway convert
+# the client's Messages request into the upstream chat lane — the translation
+# asksage-proxy PR #10 writes by hand at this path.  The public host
+# (`https://api.asksage.ai/server/anthropic`) has not been probed for it.
+# This supersedes the 2026-10-13 note.
+
+# Fields spelled out rather than left to the loader default: a provider with no
+# `reasoning:` section falls back to the Messages base cap
+# (`converters/base/helpers/reasoning.py::_DEFAULT_ANTHROPIC`), but as soon as a
+# section exists every field it omits comes from the loader's hard-coded
+# defaults instead — `effort_field` would become the flat `reasoning_effort`,
+# which is not an Anthropic Messages field.  Keep these equal to that base cap.
+reasoning:
+  thinking_modes:
+    auto: adaptive
+    enabled: enabled
+    disabled: disabled
+  effort_field: output_config.effort
+  effort_range: [low, max]
+  # Probed live 2026-10-13 against the ANL messages lane with a token minted by
+  # this package's helper (the exchange now lives in `auth.py`).  On that date
+  # the lane was
+  # Vertex-backed Claude (`msg_vrtx_...`) and validated signatures like the API
+  # it fronts: `400 messages.1.content.0.thinking.signature: Field required`
+  # (#954).  `unsigned_blocks: preserve` stays the right default for a
+  # Vertex-fronted Claude; the 2026-11-06 probe found this path answering a
+  # chat body (see the note above), so this capability describes the 10-13
+  # shape of the lane.
+  unsigned_blocks: preserve

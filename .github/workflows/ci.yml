@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
   pull_request:
 
 jobs:
@@ -17,21 +17,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install llm-rosetta (master)
+      - name: Install llm-rosetta and its gateway (master)
         run: |
           # The parent's test-fixture submodule is addressed as git@github.com:;
           # rewrite it to HTTPS, which the runner can clone without a key.
           git config --global url."https://github.com/".insteadOf "git@github.com:"
-          # The core is a two-package monorepo since 0.14; without the
-          # subdirectory pip clones the repository root, finds no project
-          # there and tries a flat-layout build of every directory.
-          pip install "llm-rosetta @ git+https://github.com/Oaklight/llm-rosetta.git@master#subdirectory=packages/llm-rosetta"
+          # The core is a two-package monorepo; without the subdirectory pip
+          # clones the repository root and finds no project there.
+          # The gateway too: the asksage tests resolve a gateway config.
+          pip install \
+            "llm-rosetta @ git+https://github.com/Oaklight/llm-rosetta.git@master#subdirectory=packages/llm-rosetta" \
+            "llm-rosetta-gateway @ git+https://github.com/Oaklight/llm-rosetta.git@master#subdirectory=packages/llm-rosetta-gateway"
       - name: Install the shim package
-        # The published floor names the first release with the vendor manifest;
-        # it is not on PyPI yet, and core is installed from git master above.
+        # Not editable: the tests run against what a wheel ships, and the
+        # floor (a development core) may not be on PyPI, so core comes from
+        # git master above and --no-deps keeps pip from resolving it again.
         run: |
-          pip install --no-deps -e .
-          pip install pytest
+          pip install --no-deps .
+          pip install pytest pyyaml
       - name: Run tests
         run: pytest tests -q
 
@@ -48,15 +51,41 @@ jobs:
       - name: Check the standalone copy is current
         run: python scripts/sync_cli_script.py --check
 
-  archive:
+  manifest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # The archive is what a mirror serves, and one that extracts to a shape
-      # the package does not ship is worse than no mirror.  The build needs no
+      # The archives and the manifest are what a gateway installs from, so
+      # the release builder runs here in dry-run on every change.  It needs no
       # dependency, so it runs before and apart from the test matrix.
-      - name: Check the release archive layout
+      - name: Check the per-vendor archive layout
         run: python scripts/build_shim_archive.py
+      - name: Build the manifest (dry run) and validate it against the spec
+        run: |
+          set -euo pipefail
+          python scripts/build_manifest.py --dry-run > manifest.json
+          python scripts/build_manifest.py --check manifest.json
+      - name: Validate against core's schema, when core ships one
+        # The manifest schema is planned as
+        # llm_rosetta/contracts/shim_manifest.schema.json (Oaklight/llm-rosetta#1660).
+        # Until core master carries it, this step reports the skip and passes.
+        run: |
+          set -euo pipefail
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          pip install jsonschema "llm-rosetta @ git+https://github.com/Oaklight/llm-rosetta.git@master#subdirectory=packages/llm-rosetta"
+          python - <<'PY'
+          import json
+          from importlib.resources import files
+
+          schema = files("llm_rosetta.contracts").joinpath("shim_manifest.schema.json")
+          if not schema.is_file():
+              print("core ships no shim_manifest.schema.json yet; skipped")
+              raise SystemExit(0)
+          import jsonschema
+
+          jsonschema.validate(json.load(open("manifest.json")), json.loads(schema.read_text()))
+          print("manifest.json validates against core's schema")
+          PY

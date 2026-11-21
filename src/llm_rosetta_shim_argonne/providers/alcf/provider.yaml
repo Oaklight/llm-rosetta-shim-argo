@@ -1,0 +1,15 @@
+# Vendor manifest: what the three clusters share.  A leaf inherits every field
+# here and may override any of them.
+#
+# The credential is this vendor's Globus OAuth grant, minted and refreshed by
+# ``auth.py`` beside this file: one interactive sign-in (the URL and code
+# Globus shows), then a rotating refresh token keeps every cluster served.  A
+# shim ships one form of its credential exchange, so there is deliberately no
+# ``token_command`` and no ``api_key_env`` here.
+#
+# ``logo``, ``group`` and ``group_label`` describe the vendor, not a cluster:
+# without ``group`` the admin would derive one from each shim name
+# (``alcf_metis``) and show three top-level groups instead of one.
+logo: https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-alcf@main/assets/alcf.svg
+group: alcf
+group_label: ALCF

@@ -1,0 +1,33 @@
+name: asksage--open_responses
+model_type: llm
+format: open_responses
+logo: https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-asksage@main/assets/asksage.webp
+
+connection:
+  base_url: https://api.asksage.ai/server/openai/v1
+
+# AskSage returns "resp_"-prefixed response ids on every model tested, so the
+# prefix is stripped on the way in and re-added on the way out.
+response_id_prefix: "resp_"
+
+# Verified live 2026-10-12 (see #899), against the ANL deployment.  The
+# Responses surface varies by model, so this is the union of what was
+# observed rather than one model's shape:
+#   gpt-4.1 / gpt-4.1-mini -> content_filters, tool_usage
+#   aws-bedrock-gemma-4-*  -> billing ({"payer": ...})
+#   aws-bedrock-gpt-oss-*  -> none of them
+# `access_programs` and `moderation` never carried a value.  AskSage ignores a
+# requested `store` (it reports `false` on some models and omits the field on
+# others), so it declares no `store_default`.
+#
+# Host note: an ANL account's minted token is rejected by `api.asksage.ai`, so
+# point `base_url` at `https://api.asksage.anl.gov/server/openai/v1` for an ANL
+# account.  The exchange shipped with this package stays the default credential.
+# Measured 2026-11-06: the raw ANL account key is also accepted directly by this
+# lane (`POST /server/openai/v1/responses` -> 200 with a `resp_` id) and by the
+# sibling chat lane, so the earlier claim that inference lanes refuse the key no
+# longer holds for that account.
+preserve_fields:
+  - billing
+  - content_filters
+  - tool_usage

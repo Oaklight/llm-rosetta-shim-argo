@@ -1,0 +1,7 @@
+name: asksage--chat_completions
+model_type: llm
+format: chat_completions
+logo: https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-asksage@main/assets/asksage.webp
+
+connection:
+  base_url: https://api.asksage.ai/server/openai/v1

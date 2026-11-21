@@ -3,39 +3,50 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "llm-rosetta-shim-argo"
+name = "llm-rosetta-shim-argonne"
 dynamic = ["version"]
-description = "Argo (Argonne) provider shims for llm-rosetta, delivered as a plugin package"
+description = "Argonne provider shims for llm-rosetta (ALCF, Argo, AskSage), delivered as a plugin package"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Oaklight" }]
-keywords = ["llm", "llm-rosetta", "shim", "argo", "provider"]
+keywords = ["llm", "llm-rosetta", "shim", "argonne", "alcf", "argo", "asksage", "provider"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "License :: OSI Approved :: MIT License",
 ]
-dependencies = ["llm-rosetta>=0.14.0.dev28"]
+# 0.14.0.dev35 is the first core with ``llm_rosetta.contracts``, the only core
+# surface this package imports.  There is no bridge for older cores: the
+# manifest's ``requires`` keeps a gateway on an older core from installing it.
+dependencies = ["llm-rosetta>=0.14.0.dev35"]
+
+[project.optional-dependencies]
+# tests/alcf/test_registration.py reads provider.yaml with PyYAML.
+test = ["pytest", "pyyaml"]
 
 [project.scripts]
-argo-tunnel = "llm_rosetta_shim_argo.tunnel:main"
+argo-tunnel = "llm_rosetta_shim_argonne.tunnel:main"
 
 [project.urls]
-Repository = "https://github.com/Oaklight/llm-rosetta-shim-argo"
+Repository = "https://github.com/Oaklight/llm-rosetta-shim-argonne"
 Upstream = "https://github.com/Oaklight/llm-rosetta"
 
+# One entry point per vendor: core runs each in its own try, so a vendor that
+# fails to load does not keep the other two from registering.
 [project.entry-points."llm_rosetta.shim_providers"]
-argo = "llm_rosetta_shim_argo:register_shims"
+alcf = "llm_rosetta_shim_argonne:register_alcf"
+argo = "llm_rosetta_shim_argonne:register_argo"
+asksage = "llm_rosetta_shim_argonne:register_asksage"
 
 [tool.setuptools.dynamic]
-version = { attr = "llm_rosetta_shim_argo.__version__" }
+version = { attr = "llm_rosetta_shim_argonne.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-llm_rosetta_shim_argo = ["providers/**/*.yaml"]
+llm_rosetta_shim_argonne = ["providers/**/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

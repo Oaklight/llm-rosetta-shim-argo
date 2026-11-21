@@ -1,0 +1,33 @@
+version: 1
+# The vendor-level ``auth.py`` exchanges need a core that loads one beside a
+# vendor manifest.  The gateway compares the first three numeric components,
+# so a 0.14.0 development core satisfies this floor.
+#
+# This file lists every shim the package ships, for a gateway source that
+# loads the whole tree.  A release archive carries one vendor and a copy of
+# this file cut to that vendor's entries (scripts/build_shim_archive.py), and
+# tests/test_layout.py checks that the list matches the provider.yaml files.
+core: ">=0.14.0"
+shims:
+  - name: alcf_metis--chat_completions
+    path: alcf/metis/llm
+  - name: alcf_minerva--chat_completions
+    path: alcf/minerva/llm
+  - name: alcf_sophia--chat_completions
+    path: alcf/sophia/llm
+  - name: argo--chat_completions
+    path: argo/llm/chat_completions
+  - name: argo--messages
+    path: argo/llm/messages
+  - name: argo--open_responses
+    path: argo/llm/open_responses
+  - name: asksage--chat_completions
+    path: asksage/llm/chat_completions
+  - name: asksage--messages
+    path: asksage/llm/messages
+  - name: asksage--open_responses
+    path: asksage/llm/open_responses
+  - name: asksage--google_generate
+    path: asksage/llm/google_generate
+  - name: asksage--embeddings
+    path: asksage/embeddings

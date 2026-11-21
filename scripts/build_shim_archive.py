@@ -1,29 +1,36 @@
 #!/usr/bin/env python3
-"""Build the shim archive this repository publishes at a release tag.
+"""Build the per-vendor shim archives this repository publishes at a release tag.
 
-The gateway can load a shim package from a GitHub repository tarball, which
-means no shim loads where GitHub is unreachable.  A committed archive on an
-otherwise-empty branch is the one shape a file CDN can serve, so every release
-publishes one:
+The package ships three vendors under ``src/llm_rosetta_shim_argonne/providers``.
+A release publishes one archive per vendor, so a gateway installs and upgrades
+each vendor on its own (``scripts/build_manifest.py`` lists them)::
 
-    dist/v<version>/<shim>.tar.gz          built here
-    dist/v<version>/<shim>.tar.gz.sha256   the digest, beside it
+    dist/<version>/<vendor>.tar.gz          built here
+    dist/<version>/<vendor>.tar.gz.sha256   the digest, beside it
 
-The archive's root is ``providers/``, carrying the same files the package
-ships under ``src/<package>/providers``.  A gateway source then declares
-``path: "providers"`` and extracts the directory it expects.
+An archive's root is ``providers/``.  Under it sit the vendor's directory,
+byte for byte as the package ships it, and a ``shims.yaml`` cut from the
+package's own to that vendor's entries::
+
+    providers/shims.yaml
+    providers/<vendor>/provider.yaml
+    providers/<vendor>/auth.py
+    providers/<vendor>/<lane>/<type>/provider.yaml
+    ...
+
+A gateway extracts it and loads ``providers/`` with core's
+``load_providers_from_dir``, which is what the package's entry points call on
+the same tree.
 
 The layout check is the point of this script: an archive that extracts to a
-different shape is worse than no mirror, because it loads nothing and the
-failure surfaces far from the build.  ``--check`` therefore builds, verifies
-and exits without writing; the release workflow runs ``--write`` and copies
-the result onto the ``dist`` branch.
+different shape is worse than no archive, because it loads nothing and the
+failure surfaces far from the build.  The script imports nothing outside the
+standard library, so CI runs it before anything is installed.
 
 Usage::
 
-    python scripts/build_shim_archive.py            # build and verify only
-    python scripts/build_shim_archive.py --write    # also write dist/v<version>/
-    python scripts/build_shim_archive.py --expect-version 0.2.0
+    python scripts/build_shim_archive.py                 # build and verify every vendor
+    python scripts/build_shim_archive.py --vendor argo   # one vendor
 """
 
 from __future__ import annotations
@@ -46,6 +53,12 @@ _IGNORED_FILE_NAMES = {".DS_Store"}
 #: The directory every archive carries at its root.
 ARCHIVE_ROOT = "providers"
 
+#: The package that ships the providers tree.
+PACKAGE = "llm_rosetta_shim_argonne"
+
+#: The selection file a gateway reads from the scan root.
+SHIMS_FILE = "shims.yaml"
+
 #: Fixed metadata, so two builds of the same tree are byte-identical and the
 #: published digest means "these files", not "these files and this clock".
 _FIXED_MTIME = 0
@@ -63,49 +76,40 @@ def repo_root() -> Path:
 
 
 def package_dir(root: Path | None = None) -> Path:
-    """Return the single ``src/llm_rosetta_shim_*`` package directory."""
-    src = (root or repo_root()) / "src"
-    candidates = sorted(
-        p
-        for p in src.iterdir()
-        if p.is_dir()
-        and p.name.startswith("llm_rosetta_shim_")
-        # A stale editable-install metadata directory shares the prefix but is
-        # not the package.
-        and not p.name.endswith(".egg-info")
-    )
-    if len(candidates) != 1:
-        names = ", ".join(p.name for p in candidates) or "none"
-        raise ArchiveError(
-            f"expected exactly one llm_rosetta_shim_* package under {src}, "
-            f"found {names}"
-        )
-    return candidates[0]
-
-
-def shim_name(root: Path | None = None) -> str:
-    """Return the archive's shim name, e.g. ``asksage``.
-
-    It is the package's suffix, which is also the preset key the gateway
-    catalog uses, so the published file name and the mirror name agree.
-    """
-    return package_dir(root).name.removeprefix("llm_rosetta_shim_")
-
-
-def package_version(root: Path | None = None) -> str:
-    """Return ``__version__`` from the package ``__init__.py``."""
-    init = package_dir(root) / "__init__.py"
-    match = re.search(
-        r'^__version__\s*=\s*["\']([^"\']+)["\']', init.read_text(), re.MULTILINE
-    )
-    if match is None:
-        raise ArchiveError(f"{init}: no __version__ assignment")
-    return match.group(1)
+    """Return the ``src/llm_rosetta_shim_argonne`` package directory."""
+    path = (root or repo_root()) / "src" / PACKAGE
+    if not path.is_dir():
+        raise ArchiveError(f"{path}: the package directory is missing")
+    return path
 
 
 def providers_dir(root: Path | None = None) -> Path:
-    """Return the package directory the archive is built from."""
+    """Return the shim tree the archives are cut from."""
     return package_dir(root) / "providers"
+
+
+def vendors(root: Path | None = None) -> list[str]:
+    """Return the vendor directories under ``providers/``, sorted.
+
+    A directory whose name starts with ``_`` or ``.`` is not a vendor: core's
+    loader skips it too.
+    """
+    return sorted(
+        d.name
+        for d in providers_dir(root).iterdir()
+        if d.is_dir()
+        and not d.name.startswith(("_", "."))
+        and d.name not in _IGNORED_DIR_NAMES
+    )
+
+
+def vendor_dir(vendor: str, root: Path | None = None) -> Path:
+    """Return ``providers/<vendor>``, refusing a name that is not a vendor."""
+    if vendor not in vendors(root):
+        raise ArchiveError(
+            f"unknown vendor {vendor!r}; the package ships {vendors(root)}"
+        )
+    return providers_dir(root) / vendor
 
 
 def shipped_files(directory: Path) -> list[str]:
@@ -127,25 +131,116 @@ def shipped_files(directory: Path) -> list[str]:
     return files
 
 
-def build_archive(directory: Path) -> bytes:
-    """Return a deterministic ``.tar.gz`` of *directory* rooted at ``providers/``."""
-    files = shipped_files(directory)
-    if not files:
-        raise ArchiveError(f"{directory}: no files to archive")
+_NAME_LINE = re.compile(r"^name:\s*['\"]?([^'\"\s#]+)", re.MULTILINE)
 
+
+def declared_shims(vendor: str, root: Path | None = None) -> list[tuple[str, str]]:
+    """Return ``(name, path)`` for every shim leaf under ``providers/<vendor>``.
+
+    A leaf is a ``provider.yaml`` with a top-level ``name:``; the vendor
+    manifest at the vendor root declares none.  ``path`` is relative to
+    ``providers/``.  The list is what the manifest's ``shims`` field and the
+    archive's ``shims.yaml`` are derived from, so a leaf added without an entry
+    cannot ship unlisted.
+    """
+    base = providers_dir(root)
+    found: list[tuple[str, str]] = []
+    for path in sorted(vendor_dir(vendor, root).rglob("provider.yaml")):
+        match = _NAME_LINE.search(path.read_text(encoding="utf-8"))
+        if match is None:
+            continue
+        found.append((match.group(1), path.parent.relative_to(base).as_posix()))
+    return found
+
+
+def _read_shims_file(path: Path) -> tuple[str | None, list[tuple[str, str]]]:
+    """Return ``(core, [(name, path), ...])`` from the package's ``shims.yaml``.
+
+    The file has a fixed shape (``version``, ``core``, a ``shims`` list of
+    ``name``/``path`` pairs), so it is read without a YAML library.
+    """
+    core: str | None = None
+    entries: list[tuple[str, str]] = []
+    pending: str | None = None
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line:
+            continue
+        if line.startswith("core:"):
+            core = line.split(":", 1)[1].strip().strip("'\"")
+            continue
+        stripped = line.strip().removeprefix("- ").strip()
+        if stripped.startswith("name:"):
+            pending = stripped.split(":", 1)[1].strip().strip("'\"")
+        elif stripped.startswith("path:"):
+            if pending is None:
+                raise ArchiveError(f"{path}: a 'path' entry without a 'name'")
+            entries.append((pending, stripped.split(":", 1)[1].strip().strip("'\"")))
+            pending = None
+    if pending is not None:
+        raise ArchiveError(f"{path}: entry {pending!r} has no 'path'")
+    return core, entries
+
+
+def vendor_shims_file(vendor: str, root: Path | None = None) -> bytes:
+    """Return the ``shims.yaml`` an archive of *vendor* carries.
+
+    It is the package's ``shims.yaml`` cut to the entries under the vendor's
+    directory, after a check that those entries are exactly the leaves the
+    vendor ships (:func:`declared_shims`).
+
+    Raises:
+        ArchiveError: When the package's list and the leaves disagree.
+    """
+    core, entries = _read_shims_file(providers_dir(root) / SHIMS_FILE)
+    listed = [(n, p) for n, p in entries if p == vendor or p.startswith(f"{vendor}/")]
+    declared = declared_shims(vendor, root)
+    if sorted(listed) != sorted(declared):
+        raise ArchiveError(
+            f"providers/{SHIMS_FILE} does not match the {vendor} leaves:\n"
+            f"  listed:   {sorted(listed)}\n"
+            f"  declared: {sorted(declared)}"
+        )
+    lines = ["version: 1"]
+    if core:
+        lines.append(f'core: "{core}"')
+    lines.append("shims:")
+    for name, path in listed:
+        lines.append(f"  - name: {name}")
+        lines.append(f"    path: {path}")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def archive_contents(vendor: str, root: Path | None = None) -> dict[str, bytes]:
+    """Return the archive's files, relative to ``providers/``, in archive order."""
+    directory = vendor_dir(vendor, root)
+    files = shipped_files(directory)
+    if not any(name.endswith("provider.yaml") for name in files):
+        raise ArchiveError(f"{directory}: no provider.yaml to archive")
+    contents = {SHIMS_FILE: vendor_shims_file(vendor, root)}
+    for relative in files:
+        contents[f"{vendor}/{relative}"] = (directory / relative).read_bytes()
+    return contents
+
+
+def _dir_info(name: str) -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.DIRTYPE
+    info.mode = _FIXED_DIR_MODE
+    info.mtime = _FIXED_MTIME
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    return info
+
+
+def build_archive(vendor: str, root: Path | None = None) -> bytes:
+    """Return a deterministic ``.tar.gz`` of one vendor, rooted at ``providers/``."""
+    contents = archive_contents(vendor, root)
     raw = io.BytesIO()
     with gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=9, mtime=0) as gz:
         with tarfile.open(fileobj=gz, mode="w", format=tarfile.GNU_FORMAT) as tar:
-            root = tarfile.TarInfo(ARCHIVE_ROOT)
-            root.type = tarfile.DIRTYPE
-            root.mode = _FIXED_DIR_MODE
-            root.mtime = _FIXED_MTIME
-            root.uid = root.gid = 0
-            root.uname = root.gname = ""
-            tar.addfile(root)
-
-            for relative in files:
-                data = (directory / relative).read_bytes()
+            tar.addfile(_dir_info(ARCHIVE_ROOT))
+            for relative, data in contents.items():
                 info = tarfile.TarInfo(f"{ARCHIVE_ROOT}/{relative}")
                 info.size = len(data)
                 info.mode = _FIXED_MODE
@@ -162,24 +257,30 @@ def archive_members(data: bytes) -> list[str]:
         return [m.name for m in tar.getmembers() if m.isfile()]
 
 
-def verify_archive(data: bytes, directory: Path) -> None:
-    """Check that *data* extracts to exactly the files *directory* ships.
+def verify_archive(data: bytes, vendor: str, root: Path | None = None) -> None:
+    """Check that *data* extracts to exactly the files one vendor ships.
 
     Raises:
         ArchiveError: On a root other than ``providers/``, an absolute or
             escaping member, a duplicate, a missing file, an extra file, or a
-            tree with no ``provider.yaml``.
+            member whose bytes differ from the tree's.
     """
-    expected = shipped_files(directory)
-    if not any(name.endswith("provider.yaml") for name in expected):
-        raise ArchiveError(f"{directory}: no provider.yaml to archive")
+    expected = archive_contents(vendor, root)
 
-    members = archive_members(data)
-    if len(set(members)) != len(members):
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        got: dict[str, bytes] = {}
+        names: list[str] = []
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            names.append(member.name)
+            extracted = tar.extractfile(member)
+            got[member.name] = extracted.read() if extracted is not None else b""
+    if len(set(names)) != len(names):
         raise ArchiveError("archive carries duplicate members")
 
     prefix = f"{ARCHIVE_ROOT}/"
-    for name in members:
+    for name in names:
         if not name.startswith(prefix):
             raise ArchiveError(
                 f"member {name!r} is outside {ARCHIVE_ROOT}/; the archive root "
@@ -190,33 +291,37 @@ def verify_archive(data: bytes, directory: Path) -> None:
         if any(part in ("", ".", "..") for part in parts):
             raise ArchiveError(f"member {name!r} has an unsafe path")
 
-    got = sorted(name[len(prefix) :] for name in members)
-    if got != expected:
-        missing = sorted(set(expected) - set(got))
-        extra = sorted(set(got) - set(expected))
+    relative = {name[len(prefix) :]: blob for name, blob in got.items()}
+    if sorted(relative) != sorted(expected):
+        missing = sorted(set(expected) - set(relative))
+        extra = sorted(set(relative) - set(expected))
         raise ArchiveError(
-            f"archive does not match {directory}:\n"
+            f"archive does not match providers/{vendor}:\n"
             f"  missing: {missing or 'none'}\n"
             f"  extra: {extra or 'none'}"
         )
+    changed = sorted(name for name in expected if expected[name] != relative[name])
+    if changed:
+        raise ArchiveError(f"archive members differ from the tree: {changed}")
+
+
+def sha256_hex(data: bytes) -> str:
+    """Return the hex SHA-256 of *data*."""
+    return hashlib.sha256(data).hexdigest()
 
 
 def digest_file_line(data: bytes, name: str) -> str:
     """Return a ``sha256sum -c`` compatible line."""
-    return f"{hashlib.sha256(data).hexdigest()}  {name}\n"
+    return f"{sha256_hex(data)}  {name}\n"
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build, verify, and optionally write the release archive."""
+    """Build and verify the per-vendor archives (nothing is written)."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--write",
-        action="store_true",
-        help="write dist/v<version>/<shim>.tar.gz and its .sha256",
-    )
-    parser.add_argument(
-        "--expect-version",
-        help="fail unless the package __version__ equals this value (the tag)",
+        "--vendor",
+        action="append",
+        help="vendor to build (repeatable; default: every vendor)",
     )
     parser.add_argument(
         "--root",
@@ -226,37 +331,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = (args.root or repo_root()).resolve()
-    directory = providers_dir(root)
-    name = shim_name(root)
-    version = package_version(root)
-    if args.expect_version is not None and args.expect_version != version:
-        raise ArchiveError(
-            f"tag says {args.expect_version}, package says {version}; "
-            f"bump the package or the tag, not the archive"
+    for vendor in args.vendor or vendors(root):
+        data = build_archive(vendor, root)
+        verify_archive(data, vendor, root)
+        print(
+            f"{vendor}.tar.gz  files={len(archive_members(data))}  sha256={sha256_hex(data)}"
         )
-
-    data = build_archive(directory)
-    verify_archive(data, directory)
-    digest = hashlib.sha256(data).hexdigest()
-    archive_name = f"{name}.tar.gz"
-
-    print(f"archive: {archive_name}")
-    print(f"files:   {len(archive_members(data))}")
-    print(f"sha256:  {digest}")
-
-    if not args.write:
-        print("check:   ok (nothing written)")
-        return 0
-
-    out_dir = root / "dist" / f"v{version}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = out_dir / archive_name
-    digest_path = out_dir / f"{archive_name}.sha256"
-    archive_path.write_bytes(data)
-    digest_path.write_text(digest_file_line(data, archive_name))
-
-    print(f"wrote:   {archive_path.relative_to(root)}")
-    print(f"wrote:   {digest_path.relative_to(root)}")
+    print("check: ok (nothing written; scripts/build_manifest.py writes dist/)")
     return 0
 
 

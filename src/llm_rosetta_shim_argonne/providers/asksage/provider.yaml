@@ -1,0 +1,31 @@
+# Vendor manifest: the credential and the mark every AskSage lane shares.
+# The mark is the vendor's own owl, served from this repository so the panel
+# never reaches the vendor's host.
+logo: https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-asksage@main/assets/asksage.webp
+#
+# A leaf inherits every field here and may override any of them.
+#
+# The credential is exchanged by ``auth.py`` beside this file: the account key
+# collected on the AskSage website is the input, and the token its endpoints
+# accept is what goes upstream.  The key therefore lives in the provider's own
+# ``api_key`` (or arrives through this variable, which a ``providers:`` entry
+# shares with the LLM lane), and there is no ``token_command`` — a shim ships
+# one form of its credential exchange.
+#
+# ``email`` on the provider names the account the key belongs to.  Without it
+# the exchange reads ``ASKSAGE_TOKEN_EMAIL``.  ``fields`` below is what puts
+# that input on the provider form: the panel renders one input per entry, and
+# one Save writes the key and the email into the same provider entry (under
+# ``auth_fields``), which is where the exchange reads them back.
+connection:
+  api_key_env: ASKSAGE_API_KEY
+#
+# ``email`` is not marked ``required``: the exchange falls back to the record
+# the CLI writes and then to ``ASKSAGE_TOKEN_EMAIL``, so a form that refused to
+# save without it would block a deployment that supplies it elsewhere.
+fields:
+  - key: email
+    label: Account email
+    placeholder: you@example.gov
+    help: The address the AskSage account key was issued to. Leave it empty to
+      use the sign-in record or ASKSAGE_TOKEN_EMAIL.

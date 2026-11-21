@@ -1,17 +1,27 @@
-name: Release archive
+name: Release
 
-# Every release publishes the shim archive twice: as a GitHub Release asset and
-# on the orphan `dist` branch.  `dist` is the only shape a file CDN can serve
-# (jsDelivr returns the 129-byte pointer for a Git LFS object, so the archive is
-# committed directly).  `main` receives nothing: `dist/` there is build output
-# and stays gitignored.
+# A `v*` tag publishes every vendor whose archive changed, and the manifest
+# that lists them, to the orphan `dist` branch (the shim manifest v1 spec,
+# Oaklight/llm-rosetta#1660):
 #
-# The archive's root is `providers/`, the layout the package ships, so a
-# gateway source declares `path: "providers"`.
+#   dist/manifest.json                   latest, overwritten each release
+#   dist/<release>/manifest.json         immutable copy for this tag
+#   dist/<version>/<vendor>.tar.gz       one per vendor version, immutable
+#   dist/<version>/<vendor>.tar.gz.sha256
 #
-# The job needs `contents: write` to create the release and push `dist`.  An
-# organization that downgrades `GITHUB_TOKEN` to read-only must restore
-# "Read and write permissions" under Settings -> Actions -> General.
+# `<release>` is the tag without its `v` and must equal the package
+# `__version__`; `<version>` is the vendor's own version from vendors.toml.
+# A vendor whose archive is unchanged keeps its published record; one whose
+# bytes changed under an already-published version fails the build, so the
+# digest a gateway pinned always names the same bytes.
+#
+# `dist` is the shape a file CDN can serve: gateways fetch
+# https://cdn.jsdelivr.net/gh/<repo>@dist/manifest.json, with
+# raw.githubusercontent.com as the fallback; the release purges the CDN copy
+# of dist/manifest.json so a new release is visible at once.  The default
+# branch receives nothing; `dist/` there is build output and stays gitignored.
+#
+# The job needs `contents: write` to push `dist` and create the release.
 
 on:
   push:
@@ -20,8 +30,7 @@ on:
 permissions:
   contents: write
 
-# Two tags pushed together must not race on the `dist` branch: the second
-# fetch would miss the first commit and the push would be rejected.
+# Two tags pushed together must not race on the `dist` branch.
 concurrency:
   group: dist-publish
   cancel-in-progress: false
@@ -35,81 +44,46 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build and verify the archive
-        id: build
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          # The tag and the package version must agree; the script refuses a
-          # mismatch, so a wrong tag cannot publish an archive under a name
-          # the loader will never ask for.
-          python scripts/build_shim_archive.py --write --expect-version "${tag#v}" | tee build.log
-          shim=$(sed -n 's/^archive: \(.*\)\.tar\.gz$/\1/p' build.log)
-          digest=$(sed -n 's/^sha256:  //p' build.log)
-          {
-            echo "shim=$shim"
-            echo "digest=$digest"
-            echo "archive=dist/${tag}/${shim}.tar.gz"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Attach to the GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          archive="dist/${tag}/${{ steps.build.outputs.shim }}.tar.gz"
-          digest_file="${archive}.sha256"
-          cat > notes.md <<EOF
-          Shim archive for ${tag}.
-
-          | field | value |
-          |:---|:---|
-          | archive | ${{ steps.build.outputs.shim }}.tar.gz |
-          | sha256 | ${{ steps.build.outputs.digest }} |
-
-          The archive's root is the providers/ directory, so a gateway source
-          loads it with path: "providers".
-
-          Two interchangeable URLs for the same bytes:
-
-          - https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${{ steps.build.outputs.shim }}.tar.gz
-          - https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@dist/${tag}/${{ steps.build.outputs.shim }}.tar.gz
-          EOF
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --notes-file notes.md
-          else
-            gh release create "$tag" --title "$tag" --notes-file notes.md
-          fi
-          gh release upload "$tag" "$archive" "$digest_file" --clobber
-
-      - name: Publish to the dist branch
+      - name: Check out the dist branch
         env:
           TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          shim="${{ steps.build.outputs.shim }}"
-          archive="$(pwd)/dist/${tag}/${shim}.tar.gz"
-          digest_file="${archive}.sha256"
-
-          work=$(mktemp -d)
+          work="${RUNNER_TEMP}/dist"
+          git init -q "$work"
           cd "$work"
-          git init -q
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-
           # Fast-forward on an existing branch; create the orphan on the first
-          # release.  The tag itself is never re-pushed from here.
+          # release.
           if git fetch -q origin dist; then
             git checkout -q -B dist FETCH_HEAD
           else
             git checkout -q --orphan dist
           fi
 
-          mkdir -p "${tag}"
-          cp "$archive" "$digest_file" "${tag}/"
+      - name: Build the archives and the manifest
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          work="${RUNNER_TEMP}/dist"
+          python scripts/build_manifest.py \
+            --out "$work" \
+            --previous "$work/manifest.json" \
+            --expect-version "${tag#v}" \
+            --commit "${GITHUB_SHA}" 2>&1 | tee build.log
+          python scripts/build_manifest.py --check "$work/manifest.json"
+          # Every archive this release wrote must match the digest beside it.
+          sed -n 's/^wrote: \(.*\.tar\.gz\)\.sha256$/\1/p' build.log | while read -r archive; do
+            ( cd "$(dirname "$archive")" && sha256sum -c "$(basename "$archive").sha256" )
+          done
+
+      - name: Publish to the dist branch
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          cd "${RUNNER_TEMP}/dist"
           git add --all
           if git diff --cached --quiet; then
             echo "dist already carries ${tag}; nothing to publish"
@@ -117,3 +91,89 @@ jobs:
           fi
           git commit -q -m "dist: ${tag}"
           git push origin dist
+
+      - name: Purge the CDN copy of the latest manifest
+        # jsDelivr caches @dist/manifest.json for up to 12 h (s-maxage=43200),
+        # so without a purge gateways keep reading the previous release.  The
+        # per-release dist/<release>/manifest.json is new and immutable, so it
+        # needs none.  The release has already succeeded by this point: a
+        # purge that does not finish is a warning with the response printed,
+        # not a failed job.
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          path = f"/gh/{os.environ['GITHUB_REPOSITORY']}@dist/manifest.json"
+          url = "https://purge.jsdelivr.net" + path
+
+
+          def get(target):
+              request = urllib.request.Request(
+                  target, headers={"User-Agent": "llm-rosetta-shim-release"}
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
+
+          def purged(answer):
+              entry = (answer.get("paths") or {}).get(path) or {}
+              return answer.get("status") == "finished" and entry.get("throttled") is False
+
+
+          answer = None
+          for attempt in range(1, 6):
+              try:
+                  answer = get(url)
+                  # A purge that is still running is polled on its status URL.
+                  for _ in range(6):
+                      if answer.get("status") != "pending" or not answer.get("id"):
+                          break
+                      time.sleep(5)
+                      answer = get(f"https://purge.jsdelivr.net/status/{answer['id']}")
+              except Exception as exc:  # noqa: BLE001 - every failure is retried
+                  answer = {"error": f"{type(exc).__name__}: {exc}"}
+              print(f"attempt {attempt}: {json.dumps(answer, sort_keys=True)}")
+              if purged(answer):
+                  print(f"purged {path}")
+                  break
+              time.sleep(10 * attempt)
+          else:
+              print(
+                  f"::warning::jsDelivr did not confirm the purge of {path}; "
+                  f"gateways may read the previous manifest for up to 12 h. "
+                  f"Last answer: {json.dumps(answer, sort_keys=True)}"
+              )
+          PY
+
+      - name: Attach to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          work="${RUNNER_TEMP}/dist"
+          release="${tag#v}"
+          assets=("$work/$release/manifest.json")
+          # Attach the archives this release added (the "wrote:" lines).
+          while read -r path; do
+            assets+=("$path")
+          done < <(sed -n 's/^wrote: \(.*\.tar\.gz\(\.sha256\)\?\)$/\1/p' build.log)
+          cat > notes.md <<EOF
+          Shim archives and manifest for ${tag}.
+
+          Gateways read the manifest from the dist branch:
+
+          - https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@dist/manifest.json
+          - https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/dist/manifest.json
+
+          Each vendor archive's root is providers/, the layout core's loader reads.
+          EOF
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file notes.md
+          else
+            gh release create "$tag" --title "$tag" --notes-file notes.md
+          fi
+          gh release upload "$tag" "${assets[@]}" --clobber

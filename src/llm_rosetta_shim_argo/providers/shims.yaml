@@ -1,8 +1,0 @@
-version: 1
-shims:
-  - name: argo--chat_completions
-    path: argo/llm/chat_completions
-  - name: argo--messages
-    path: argo/llm/messages
-  - name: argo--open_responses
-    path: argo/llm/open_responses

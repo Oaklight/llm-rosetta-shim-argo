@@ -1,120 +1,211 @@
-# llm-rosetta-shim-argo
+# llm-rosetta-shim-argonne
 
-Argo (Argonne) provider shims for [llm-rosetta](https://github.com/Oaklight/llm-rosetta),
-delivered as a **plugin package** rather than as built-in shims.
+Provider shims for the three Argonne services, for
+[llm-rosetta](https://github.com/Oaklight/llm-rosetta), in one plugin package:
 
-The `argo--*` shims left llm-rosetta core in 0.14.0
-([#666](https://github.com/Oaklight/llm-rosetta/issues/666)); this package is now
-their only source. Declare it in the gateway config and existing provider
-entries keep their names:
+| Vendor | Service | Shims |
+|:---|:---|:---|
+| `alcf` | ALCF inference endpoints (Argonne Leadership Computing Facility) | `alcf_metis--chat_completions`, `alcf_minerva--chat_completions`, `alcf_sophia--chat_completions` |
+| `argo` | Argo, Argonne's internal LLM gateway | `argo--chat_completions`, `argo--messages`, `argo--open_responses` |
+| `asksage` | AskSage (the ANL and public deployments) | `asksage--chat_completions`, `asksage--open_responses`, `asksage--messages`, `asksage--google_generate`, `asksage--embeddings` |
+
+This repository was `llm-rosetta-shim-argo`. The `alcf` and `asksage` packages
+(`llm-rosetta-shim-alcf`, `llm-rosetta-shim-asksage`) were merged into it with
+their history (Oaklight/llm-rosetta#1660). Shim names did not change, so
+existing provider entries keep working.
+
+The package also ships `argo-tunnel`, the SSH tunnel CLI that makes Argo
+reachable from outside the Argonne network; see
+[The tunnel](#the-tunnel-argo-tunnel).
+
+## Installing in the gateway
+
+A gateway installs the vendors from this repository's **manifest**, one archive
+per vendor, choosing for each vendor the newest version whose `requires` its
+core satisfies, pinned by sha256:
 
 ```jsonc
-{ "shims": { "presets": ["argo"] } }
+{
+  "shims": {
+    "sources": ["argonne"],          // catalogue id, or the manifest URL below
+    "install": ["argonne:*"]         // or single vendors: ["alcf", "argo"], or tags: ["tag:org:argonne"]
+  }
+}
 ```
 
-`shims.presets` expands to this repository's archive path via llm-rosetta's
-catalogue; the equivalent explicit entry is `{"url": "...", "path":
-"src/llm_rosetta_shim_argo/providers"}`. The repository is public, so no
-`token_env` is needed.
+The manifest lives on the orphan `dist` branch:
 
-The same package also ships `argo-tunnel`, the SSH tunnel CLI that makes the
-endpoint reachable from outside the network — see
-[The tunnel](#the-tunnel-argo-tunnel).
+```
+https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-argonne@dist/manifest.json
+https://raw.githubusercontent.com/Oaklight/llm-rosetta-shim-argonne/dist/manifest.json   (fallback)
+```
+
+In a gateway that reads manifests, the older preset keys need no config edit:
+`"presets": ["alcf", "argo", "asksage"]` maps to source `argonne` with
+`install` set to the named vendors.
+
+Reading manifests needs a gateway that implements `shims.sources`
+(Oaklight/llm-rosetta#1660, step S2). A gateway before that loads the
+repository tree from the default branch through its preset.
+
+### As a Python package
+
+```bash
+pip install llm-rosetta llm-rosetta-shim-argonne
+```
+
+llm-rosetta discovers the package's three `llm_rosetta.shim_providers` entry
+points (`alcf`, `argo`, `asksage`) during `import llm_rosetta` and registers
+every shim. Core runs each entry point on its own, so a vendor that fails to
+load is logged and the other two still register.
+
+```python
+from llm_rosetta.api import get_shim
+
+shim = get_shim("argo--chat_completions")
+print(shim.connection.base_url)
+```
 
 ## Shims
 
-| Shim | Base | Endpoint |
+### ALCF
+
+The names follow core's `alcf_<cluster>--<format>` spelling: the cluster is in
+the provider segment, and the segment after `--` is the API format. All three
+clusters declare `group: alcf`, so the admin provider picker shows one `alcf`
+group with the rows `metis · chat_completions`, `minerva · chat_completions`
+and `sophia · chat_completions`.
+
+| Shim | Format | Endpoint |
+|:---|:---|:---|
+| `alcf_metis--chat_completions` | `chat_completions` | `https://inference-api.alcf.anl.gov/resource_server/metis/api/v1` |
+| `alcf_minerva--chat_completions` | `chat_completions` | `https://inference-api.alcf.anl.gov/resource_server/minerva/api/v1` |
+| `alcf_sophia--chat_completions` | `chat_completions` | `https://inference-api.alcf.anl.gov/resource_server/sophia/vllm/v1` |
+
+Model IDs come from a shared `model_list_transform` (framework-aware filtering).
+
+### Argo
+
+| Shim | Format | Endpoint |
 |:---|:---|:---|
 | `argo--chat_completions` | `chat_completions` | `https://apps.inside.anl.gov/argoapi/v1` |
 | `argo--messages` | `messages` | `https://apps.inside.anl.gov/argoapi` |
 | `argo--open_responses` | `open_responses` | `https://apps.inside.anl.gov/argoapi` |
 
-Each shim carries the Argo-specific connection defaults, reasoning config, soft-error
-patterns, and field/schema transforms (Gemini-via-Argo quirks, model-ID mapping).
+Each shim carries the Argo connection defaults, reasoning config, soft-error
+patterns, and field and schema transforms (Gemini-via-Argo quirks, model-ID
+mapping).
 
-## Install
+### AskSage
+
+| Shim | Model type | Format |
+|:---|:---|:---|
+| `asksage--chat_completions` | `llm` | `chat_completions` |
+| `asksage--open_responses` | `llm` | `open_responses` |
+| `asksage--messages` | `llm` | `messages` |
+| `asksage--google_generate` | `llm` | `google_generate` |
+| `asksage--embeddings` | `embeddings` | `openai` |
+
+`asksage--embeddings` targets `POST /server/openai/v1/embeddings`, under the
+same `/server/openai/v1` root as the chat lane.
+
+`asksage--messages` targets `/server/anthropic`. Measured 2026-11-06 against
+the ANL deployment, that path answers HTTP 200 with an OpenAI
+`chat.completion` body, not a Messages envelope. On ANL, use
+`asksage--chat_completions` and let the gateway convert a client's Messages
+request.
+
+The `google_generate` leaf sends the token in `x-access-tokens`; the
+`chat_completions` and `open_responses` leaves rename fields; the `embeddings`
+leaf declares only its base URL and path.
+
+The pre-0.14 spellings (`*--openai_chat`, `*--openai_responses`,
+`*--anthropic`, `alcf--<cluster>`) do not resolve; use the names above.
+
+## Credentials
+
+Each vendor ships its credential exchange as `providers/<vendor>/auth.py`,
+beside its vendor manifest, so every lane of a vendor authenticates alike.
+
+### ALCF: a Globus grant
+
+The ALCF inference service takes a Globus access token, minted from a grant
+that a person obtains once by signing in at `auth.globus.org`. The first
+sign-in is interactive, once per provider:
 
 ```bash
-pip install llm-rosetta
-pip install llm-rosetta-shim-argo
+llm-rosetta credential login --provider "<the provider's name>"
 ```
 
-llm-rosetta discovers the `llm_rosetta.shim_providers` entry point on startup and
-registers the `argo--*` shims automatically — no import needed in application code.
+It prints a Globus URL and takes the code that the page shows. In the admin
+panel the same flow is the provider's **Sign in** action; the gateway host needs
+no loopback port and no browser. After that, the rotating refresh token keeps
+every cluster served: at startup, on the gateway's refresh interval, and after
+an upstream 401.
 
-## Usage
+The grant is kept where the vendor's own tools keep it,
+`~/.globus/app/<client-id>/inference_app/tokens.json`, and written back in that
+layout. An installation that already signed in with `alcf-ai` needs no step,
+and a container that mounts `~/.globus` is configured once for both. Only when
+that file does not exist is a record written under the gateway's `state_dir`.
+`ALCF_API_KEY` is not read.
 
-```python
-from llm_rosetta.shims import get_shim
+ALCF enforces a high-assurance session policy: a grant that keeps renewing can
+still be refused once the interactive sign-in is too old, and the upstream 401
+says so. Sign in again when that happens.
 
-shim = get_shim("argo--chat_completions")   # requires ARGO_API_KEY in the environment
-print(shim.connection.base_url)
-```
+### Argo: the ANL account name, through the tunnel
 
-The pre-0.14 spellings `argo--openai_chat`, `argo--openai_responses` and
-`argo--anthropic` no longer resolve to a shim: this package registers the
-canonical names only. They remain in llm-rosetta as a spelling map, so an old
-config canonicalises first and reaches the error naming this package. Update
-the spelling to the canonical name above.
+Argo has no token to mint. The upstream checks the ANL account name, which goes
+in the provider's `api_key` (or `ARGO_API_KEY`). The exchange declares
+`consumes_key`, so the key field stays and is the only secret. When the
+provider declares a SOCKS `proxy` and nothing listens on it, the exchange
+reports "needs sign-in" with the `argo-tunnel auth` command instead of letting
+the request fail with a 502. It never starts, stops or repairs the tunnel, and
+it stores nothing.
 
-## Archive and mirror
+| Panel state | Means |
+|:---|:---|
+| Connected | The account name is set and the tunnel answers |
+| Needs sign-in | The proxy is declared but nothing listens on it |
+| Failing | No account name is configured |
 
-Every release publishes one archive of the bundled shims, so a gateway can load
-them from a host other than GitHub. `main` never carries it: `dist/` is build
-output and is in `.gitignore`.
+### AskSage: the account key, exchanged for a token
 
-- `v<version>/argo.tar.gz` and `v<version>/argo.tar.gz.sha256` live on the
-  orphan `dist` branch.
-- The same bytes are attached to the GitHub Release, with the digest in its
-  notes.
+AskSage's inference lanes take a short-lived access token minted by
+`POST {host}/user/get-token-with-api-key` from the account key that the holder
+copies from the AskSage website.
 
-Two interchangeable, version-pinned URLs for the same bytes:
+- **The account key is the input.** Put it in the provider's `api_key`, or
+  export `ASKSAGE_API_KEY`. The minted token goes upstream, never the key.
+- **The host is part of the credential.** The token is minted against the
+  origin of the provider's `base_url`, so the ANL and public deployments
+  cannot be mixed up (the mismatch gave `Key doesnt exist`).
+- **The account email is required.** In order of precedence: the **Account
+  email** field on the provider form (stored in the entry's `auth_fields`), a
+  flat `email` key, or `ASKSAGE_TOKEN_EMAIL`.
 
-```
-https://github.com/Oaklight/llm-rosetta-shim-argo/releases/download/v<version>/argo.tar.gz
-https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-argo@dist/v<version>/argo.tar.gz
-```
+The token is cached until shortly before its `exp` claim.
 
-The archive's root is `providers/`, the layout the package ships under
-`src/llm_rosetta_shim_argo/providers`, so a gateway source declares `path: "providers"`:
+An embeddings provider declared under `providers:` shares its LLM lane's key
+ring, so one entry serves every lane with the same minted token:
 
 ```jsonc
 {
-  "shims": {
-    "remotes": [
-      {
-        "url": "https://cdn.jsdelivr.net/gh/Oaklight/llm-rosetta-shim-argo@dist/v<version>/argo.tar.gz",
-        "path": "providers",
-        "archive": "tar.gz",
-        "sha256": "<digest from v<version>/argo.tar.gz.sha256>"
-      }
-    ]
-  }
+  "providers": {
+    "asksage": {
+      "shim": "asksage--chat_completions",
+      "api_key": "<account key>",
+      "embeddings_shim": "asksage--embeddings"
+    }
+  },
+  "embeddings_models": { "text-embedding-3-small": "asksage" }
 }
 ```
 
-The digest is what pins the mirror, and the same value appears in the release
-notes. jsDelivr is only the default suggestion: the gateway accepts any URL that
-serves the same bytes, an internal mirror included.
-
-### Publishing a release
-
-1. Bump `__version__` in `src/llm_rosetta_shim_argo/__init__.py`. The tag must match it —
-   the release workflow passes the tag without its `v` as `--expect-version` and
-   refuses a mismatch.
-2. `python scripts/build_shim_archive.py --write` builds
-   `dist/v<version>/argo.tar.gz` and its digest locally and verifies the
-   layout. CI runs the same build without writing on every push, so a tree whose
-   `providers/` layout changed fails before a tag is cut.
-3. Tag and push: `git tag v<version> && git push origin v<version>`.
-4. `.github/workflows/release.yml` builds from the tag, creates or updates the
-   GitHub Release, uploads the archive and its digest file, and commits
-   `v<version>/` to the `dist` branch.
-
-The workflow requests `contents: write` for `GITHUB_TOKEN`, because it creates
-the release and pushes `dist`. An organization that downgrades action tokens to
-read-only must restore "Read and write permissions" under Settings → Actions →
-General, or the release step fails.
+A legacy `embeddings_providers` entry has no LLM lane to share the token with,
+so an entry there that mints is disabled with a reason that names the fix:
+move the provider to `providers:`.
 
 ## The tunnel (`argo-tunnel`)
 
@@ -132,7 +223,7 @@ argo-tunnel proxy-url                                  # socks5://127.0.0.1:1080
 No install needed — the same program is published as one file:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/Oaklight/llm-rosetta-shim-argo/main/scripts/argo-tunnel.py
+curl -fsSLO https://raw.githubusercontent.com/Oaklight/llm-rosetta-shim-argonne/main/scripts/argo-tunnel.py
 python argo-tunnel.py auth pding --target lambda5.cels.anl.gov
 ```
 
@@ -176,7 +267,7 @@ Then point the Argo provider's `proxy` field at that URL:
       "api_key": "<your ANL username>"
     }
   },
-  "shims": { "presets": ["argo"] }
+  "shims": { "sources": ["argonne"], "install": ["argo"] }
 }
 ```
 
@@ -184,24 +275,6 @@ Then point the Argo provider's `proxy` field at that URL:
 (SOCKS) forward, not a local `-L` one, so the hostname the shim declares is the
 hostname the TLS certificate is checked against. A local forward would answer
 on `127.0.0.1` and fail verification.
-
-### What the admin panel shows
-
-The shim ships an `auth.py` exchange beside its vendor manifest, so the Auth
-tab has a credential section for it instead of only a key box:
-
-| Panel state | Means | What the exchange checked |
-|---|---|---|
-| Connected | The account name is set and the tunnel answers | a loopback connect to the entry's SOCKS `proxy` |
-| Needs sign-in | The proxy is declared but nothing listens | the same connect, refused — the message names the URL and `argo-tunnel auth` |
-| Failing | No account name is configured | the message says to put the ANL username in the key field |
-
-The exchange declares `consumes_key`: your ANL username **is** the credential,
-so the key field stays and is not a second secret beside a minted one. It never
-starts, stops or repairs the tunnel — the gateway has no terminal and `auth`
-blocks on Duo — and it stores no record, so the install/sign-out actions are
-not offered. A deployment with no `proxy` (a host already inside the network)
-is not asked for a tunnel.
 
 ### Commands
 
@@ -325,16 +398,61 @@ The defaults are the Argonne pair: `homes.cels.anl.gov` through
   (`--bind 172.17.0.1`) and point `proxy` at it. Never bind `0.0.0.0`: SOCKS5
   here has no authentication.
 
+## Repository layout
+
+```
+src/llm_rosetta_shim_argonne/
+  __init__.py              entry points: register_alcf / register_argo / register_asksage
+  tunnel.py                the argo-tunnel CLI (stdlib only)
+  providers/
+    shims.yaml             every shim the package ships
+    alcf/                  provider.yaml (vendor manifest), auth.py, model_utils.py,
+                           <cluster>/llm/{provider.yaml,transforms.py}
+    argo/                  provider.yaml, auth.py, model_utils.py, llm/<format>/...
+    asksage/               provider.yaml, auth.py, llm/<format>/..., embeddings/
+tests/{alcf,argo,asksage}/ each vendor's tests
+tests/test_layout.py       entry points, import boundary, archive loading
+tests/test_manifest.py     the manifest builder
+vendors.toml               per-vendor release metadata (version, maturity, tags)
+scripts/build_shim_archive.py   per-vendor archives
+scripts/build_manifest.py       archives + manifest.json
+```
+
+Shim code imports core only through `llm_rosetta.contracts` (sidecars and entry
+points run during `import llm_rosetta`, when `llm_rosetta.api` cannot be
+imported yet); tests may also use `llm_rosetta.api`. `tests/test_layout.py`
+enforces the first rule.
+
+## Releasing
+
+A vendor's version, maturity and tags live in `vendors.toml`. A release:
+
+1. Bump the version of each vendor whose files changed in `vendors.toml`, and
+   the package `__version__` in `src/llm_rosetta_shim_argonne/__init__.py`.
+   The tag must equal `__version__`.
+2. `python scripts/build_manifest.py --dry-run` builds every archive, checks
+   its layout, and prints the manifest. CI runs the same dry run and validates
+   the result on every push.
+3. Tag and push `v<__version__>`. `.github/workflows/release.yml` extends the
+   published manifest with a record for each vendor whose archive changed,
+   writes `dist/<version>/<vendor>.tar.gz` (and `.sha256`),
+   `dist/manifest.json` and `dist/<release>/manifest.json` to the `dist`
+   branch, and attaches them to the GitHub Release.
+
+A published record is never edited. An unchanged archive keeps its record; an
+archive whose bytes changed under an already-published version fails the
+build until its version is bumped. The workflow needs `contents: write`.
+
 ## Requirements
 
-- Python >= 3.10
-- `llm-rosetta >= 0.14.0.dev28` (needs the plugin shim loader and the
-  vendor manifest)
-- `ARGO_API_KEY` in the environment at request time
-- for the tunnel: `ssh` on `PATH`, and an SSH account that reaches
-  `homes.cels.anl.gov` through `logins.cels.anl.gov`. `llm-rosetta` itself is
-  not needed for the tunnel — importing the package does not import it.
+- Python >= 3.10 (the release builder needs 3.11+ for `tomllib`)
+- `llm-rosetta >= 0.14.0.dev35`, the first core with `llm_rosetta.contracts`.
+  There is no fallback for older cores; the manifest's `requires` keeps a
+  gateway on an older core from installing these archives.
+- For the tunnel: `ssh` on `PATH`, and an SSH account that reaches
+  `homes.cels.anl.gov` through `logins.cels.anl.gov`. The tunnel does not need
+  llm-rosetta; importing the package does not import it.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT; see [LICENSE](LICENSE).

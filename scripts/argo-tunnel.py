@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Generated from src/llm_rosetta_shim_argo/tunnel.py -- do not edit here.
+# Generated from src/llm_rosetta_shim_argonne/tunnel.py -- do not edit here.
 # Regenerate with: python scripts/sync_cli_script.py
 #
 # Standalone by design: standard library only, no llm-rosetta import, so this
 # file runs from a download with no install step:
 #
-#   curl -fsSLO https://raw.githubusercontent.com/Oaklight/llm-rosetta-shim-argo/main/scripts/argo-tunnel.py
+#   curl -fsSLO https://raw.githubusercontent.com/Oaklight/llm-rosetta-shim-argonne/main/scripts/argo-tunnel.py
 #   python argo-tunnel.py auth pding --target lambda5.cels.anl.gov
 """The SSH tunnel that makes ``apps.inside.anl.gov`` reachable, as a CLI.
 
@@ -20,7 +20,7 @@ Single file on purpose
 This module imports only the standard library and nothing else from this
 package, so it can be fetched and run without installing anything::
 
-    curl -fsSLO https://raw.githubusercontent.com/Oaklight/llm-rosetta-shim-argo/main/scripts/argo-tunnel.py
+    curl -fsSLO https://raw.githubusercontent.com/Oaklight/llm-rosetta-shim-argonne/main/scripts/argo-tunnel.py
     python argo-tunnel.py auth pding --target lambda5.cels.anl.gov
 
 That copy is generated from this file by ``scripts/sync_cli_script.py`` and a

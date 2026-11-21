@@ -1,0 +1,13 @@
+name: alcf_minerva--chat_completions
+model_type: llm
+format: chat_completions
+# `display_name` is this shim's label inside the vendor's group (inherited from
+# ../../provider.yaml), rendered as "minerva · chat_completions".
+display_name: minerva
+
+connection:
+  base_url: https://inference-api.alcf.anl.gov/resource_server/minerva/api/v1
+  models_path: https://inference-api.alcf.anl.gov/resource_server/minerva/models
+
+tools:
+  custom_tools: true
